@@ -20,6 +20,15 @@ def sor():
         return jsonify({"cevap": response.choices[0].message.content})
     except Exception as e:
         return jsonify({"cevap": f"Hata: {str(e)}"}), 500
-
+@app.route("/sitemap.xml")
+def sitemap():
+    return '''<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://al-bq0g.onrender.com/</loc>
+    <priority>1.0</priority>
+  </url>
+</urlset>''', 200, {'Content-Type': 'application/xml'}
+    
 if __name__ == "__main__":
     app.run(debug=True)
