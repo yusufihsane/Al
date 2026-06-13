@@ -28,8 +28,7 @@ def sitemap():
     <loc>https://al-bq0g.onrender.com/</loc>
     <priority>1.0</priority>
   </url>
-</urlset>''', 200, {'Content-Type': 'application/xml'} 
-    
+</urlset>''', 200, {'Content-Type': 'application/xml'}     
  @app.route("/robots.txt")
 def robots():
     return '''User-agent: *
