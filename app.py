@@ -5,6 +5,7 @@ import tempfile
 
 app = Flask(__name__)
 
+# Gemini API
 client = genai.Client(
     api_key=os.environ.get("GEMINI_API_KEY")
 )
@@ -17,79 +18,177 @@ def index():
 
 @app.route("/sor", methods=["POST"])
 def sor():
+
     try:
-        soru = request.form.get("soru", "")
+
+        # Kullanıcının yazdığı soru
+        soru = request.form.get("soru", "").strip()
+
+        # Gönderilen dosya
         dosya = request.files.get("dosya")
 
-        # Dosya varsa
+
+        # --------------------------------
+        # DOSYA VARSA
+        # --------------------------------
+
         if dosya and dosya.filename:
 
-            # Geçici olarak kaydet
+            uzanti = os.path.splitext(
+                dosya.filename
+            )[1]
+
+
+            # Geçici dosya oluştur
             with tempfile.NamedTemporaryFile(
                 delete=False,
-                suffix=os.path.splitext(dosya.filename)[1]
+                suffix=uzanti
             ) as temp:
 
                 dosya.save(temp.name)
+
                 dosya_yolu = temp.name
 
-            # Gemini'ye dosyayı yükle
-            gemini_dosyasi = client.files.upload(
-                file=dosya_yolu
-            )
 
-            # Gemini'ye soruyu ve dosyayı gönder
-            response = client.models.generate_content(
-                model="gemini-3.7-flash",
-                contents=[
-                    soru or "Bu dosyayı incele ve açıkla.",
-                    gemini_dosyasi
-                ]
-            )
+            try:
 
-            # Geçici dosyayı sil
-            os.remove(dosya_yolu)
+                # Gemini'ye dosyayı yükle
+                gemini_dosyasi = client.files.upload(
+                    file=dosya_yolu
+                )
+
+
+                # Soru boşsa varsayılan soru
+                if not soru:
+
+                    soru = (
+                        "Bu dosyayı incele ve "
+                        "bana açıklayabilir misin?"
+                    )
+
+
+                # Gemini
+                response = client.models.generate_content(
+
+                    model="gemini-2.5-flash",
+
+                    contents=[
+                        soru,
+                        gemini_dosyasi
+                    ]
+
+                )
+
+
+            finally:
+
+                # Geçici dosyayı sil
+                if os.path.exists(dosya_yolu):
+
+                    os.remove(dosya_yolu)
+
+
+        # --------------------------------
+        # SADECE YAZI
+        # --------------------------------
 
         else:
-            # Normal mesaj
+
+            if not soru:
+
+                return jsonify({
+                    "cevap": "Lütfen bir mesaj yaz."
+                })
+
+
             response = client.models.generate_content(
-                model="gemini-3.7-flash",
+
+                model="gemini-2.5-flash",
+
                 contents=soru
+
             )
 
+
+        # --------------------------------
+        # CEVAP
+        # --------------------------------
+
         return jsonify({
+
             "cevap": response.text
+
         })
+
 
     except Exception as e:
 
+        print("HATA:", e)
+
         return jsonify({
-            "cevap": f"Hata: {str(e)}"
+
+            "cevap": "❌ Hata: " + str(e)
+
         }), 500
 
 
+# --------------------------------
+# SITEMAP
+# --------------------------------
+
 @app.route("/sitemap.xml")
 def sitemap():
-    return '''<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url>
-    <loc>https://al-bq0g.onrender.com/</loc>
-    <priority>1.0</priority>
-  </url>
-</urlset>''', 200, {
-    'Content-Type': 'application/xml'
-}
 
+    return """<?xml version="1.0" encoding="UTF-8"?>
+
+<urlset
+xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+
+<url>
+
+<loc>
+https://al-bq0g.onrender.com/
+</loc>
+
+<priority>1.0</priority>
+
+</url>
+
+</urlset>
+""", 200, {
+        "Content-Type": "application/xml"
+    }
+
+
+# --------------------------------
+# ROBOTS
+# --------------------------------
 
 @app.route("/robots.txt")
 def robots():
-    return '''User-agent: *
-Allow: /
-Sitemap: https://al-bq0g.onrender.com/sitemap.xml
-''', 200, {
-    'Content-Type': 'text/plain'
-}
 
+    return """User-agent: *
+Allow: /
+
+Sitemap: https://al-bq0g.onrender.com/sitemap.xml
+""", 200, {
+        "Content-Type": "text/plain"
+    }
+
+
+# --------------------------------
+# ÇALIŞTIR
+# --------------------------------
 
 if __name__ == "__main__":
-    app.run(debug=True)
+
+    app.run(
+        host="0.0.0.0",
+        port=int(
+            os.environ.get(
+                "PORT",
+                5000
+            )
+        ),
+        debug=True
+    )
