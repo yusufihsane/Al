@@ -150,7 +150,7 @@ def sor():
 
                 response = client.models.generate_content(
 
-                    model="gemini-3.7-flash-lite",
+                    model="gemini-3.6-flash",
 
                     contents=[
                         soru,
@@ -188,7 +188,7 @@ def sor():
 
             response = client.models.generate_content(
 
-                model="gemini-3.7-flash-lite",
+                model="gemini-3.6-flash",
 
                 contents=soru
 
