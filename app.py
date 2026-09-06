@@ -5,32 +5,105 @@ import tempfile
 
 app = Flask(__name__)
 
-# Gemini API
+# ==========================================
+# GEMINI API
+# ==========================================
+
+API_KEY = os.environ.get("GEMINI_API_KEY")
+
+if not API_KEY:
+    print("UYARI: GEMINI_API_KEY bulunamadı!")
+
 client = genai.Client(
-    api_key=os.environ.get("GEMINI_API_KEY")
+    api_key=API_KEY
 )
 
+
+# ==========================================
+# ANA SAYFA
+# ==========================================
 
 @app.route("/")
 def index():
     return render_template("index.html")
 
 
+# ==========================================
+# GEMINI TEST
+# ==========================================
+
+@app.route("/test")
+def test():
+
+    try:
+
+        if not API_KEY:
+            return jsonify({
+                "durum": "HATA",
+                "mesaj": "GEMINI_API_KEY Render'da bulunamadı."
+            }), 500
+
+        response = client.models.generate_content(
+            model="gemini-3.6-flash",
+            contents="Merhaba! Sadece TEST yaz."
+        )
+
+        return jsonify({
+            "durum": "OK",
+            "cevap": response.text
+        })
+
+    except Exception as e:
+
+        print("TEST HATASI:", repr(e))
+
+        return jsonify({
+            "durum": "HATA",
+            "mesaj": str(e)
+        }), 500
+
+
+# ==========================================
+# SOR
+# ==========================================
+
 @app.route("/sor", methods=["POST"])
 def sor():
 
     try:
 
-        # Kullanıcının yazdığı soru
+        print("================================")
+        print("SOR İSTEĞİ GELDİ")
+        print("================================")
+
+        # Kullanıcının sorusu
         soru = request.form.get("soru", "").strip()
 
-        # Gönderilen dosya
+        # Dosya
         dosya = request.files.get("dosya")
 
+        print("Soru:", soru)
 
-        # --------------------------------
+        if dosya:
+            print("Dosya:", dosya.filename)
+        else:
+            print("Dosya yok")
+
+
+        # ==================================
+        # API KEY KONTROL
+        # ==================================
+
+        if not API_KEY:
+
+            return jsonify({
+                "cevap": "❌ GEMINI_API_KEY Render'da ayarlanmamış."
+            }), 500
+
+
+        # ==================================
         # DOSYA VARSA
-        # --------------------------------
+        # ==================================
 
         if dosya and dosya.filename:
 
@@ -38,36 +111,43 @@ def sor():
                 dosya.filename
             )[1]
 
-
-            # Geçici dosya oluştur
-            with tempfile.NamedTemporaryFile(
-                delete=False,
-                suffix=uzanti
-            ) as temp:
-
-                dosya.save(temp.name)
-
-                dosya_yolu = temp.name
-
+            dosya_yolu = None
 
             try:
 
-                # Gemini'ye dosyayı yükle
+                # Geçici dosya
+                with tempfile.NamedTemporaryFile(
+                    delete=False,
+                    suffix=uzanti
+                ) as temp:
+
+                    dosya.save(temp.name)
+
+                    dosya_yolu = temp.name
+
+
+                print("Dosya Gemini'ye yükleniyor...")
+
+                # Gemini Files API
                 gemini_dosyasi = client.files.upload(
                     file=dosya_yolu
                 )
 
+                print("Dosya yüklendi.")
 
-                # Soru boşsa varsayılan soru
+
+                # Soru yoksa
                 if not soru:
 
                     soru = (
-                        "Bu dosyayı incele ve "
-                        "bana açıklayabilir misin?"
+                        "Bu dosyayı incele. "
+                        "İçeriğini bana Türkçe olarak açıkla."
                     )
 
 
-                # Gemini
+                print("Gemini cevap oluşturuyor...")
+
+
                 response = client.models.generate_content(
 
                     model="gemini-3.6-flash",
@@ -80,17 +160,20 @@ def sor():
                 )
 
 
+                print("Gemini cevap verdi.")
+
+
             finally:
 
                 # Geçici dosyayı sil
-                if os.path.exists(dosya_yolu):
+                if dosya_yolu and os.path.exists(dosya_yolu):
 
                     os.remove(dosya_yolu)
 
 
-        # --------------------------------
+        # ==================================
         # SADECE YAZI
-        # --------------------------------
+        # ==================================
 
         else:
 
@@ -101,6 +184,8 @@ def sor():
                 })
 
 
+            print("Sadece yazı gönderiliyor...")
+
             response = client.models.generate_content(
 
                 model="gemini-3.6-flash",
@@ -109,46 +194,56 @@ def sor():
 
             )
 
+            print("Gemini cevap verdi.")
 
-        # --------------------------------
+
+        # ==================================
         # CEVAP
-        # --------------------------------
+        # ==================================
+
+        cevap = response.text
+
+        print("Cevap:", cevap)
 
         return jsonify({
-
-            "cevap": response.text
-
+            "cevap": cevap
         })
 
 
+    # ==================================
+    # HATA
+    # ==================================
+
     except Exception as e:
 
-        print("HATA:", e)
+        print("================================")
+        print("GEMINI / FLASK HATASI")
+        print("================================")
+        print(repr(e))
+        print("================================")
 
         return jsonify({
 
-            "cevap": "❌ Hata: " + str(e)
+            "cevap":
+            "❌ Gemini hatası:\n" + str(e)
 
         }), 500
 
 
-# --------------------------------
+# ==========================================
 # SITEMAP
-# --------------------------------
+# ==========================================
 
 @app.route("/sitemap.xml")
 def sitemap():
 
     return """<?xml version="1.0" encoding="UTF-8"?>
 
-<urlset
-xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 
 <url>
 
-<loc>
-https://al-bq0g.onrender.com/
-</loc>
+<loc>https://al-bq0g.onrender.com/</loc>
 
 <priority>1.0</priority>
 
@@ -160,9 +255,9 @@ https://al-bq0g.onrender.com/
     }
 
 
-# --------------------------------
+# ==========================================
 # ROBOTS
-# --------------------------------
+# ==========================================
 
 @app.route("/robots.txt")
 def robots():
@@ -176,9 +271,9 @@ Sitemap: https://al-bq0g.onrender.com/sitemap.xml
     }
 
 
-# --------------------------------
+# ==========================================
 # ÇALIŞTIR
-# --------------------------------
+# ==========================================
 
 if __name__ == "__main__":
 
