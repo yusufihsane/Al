@@ -3,7 +3,7 @@ from google import genai
 import os
 import tempfile
 
-app = Flask(**name**)
+app = Flask(_name_)
 
 # ==========================================
 
