@@ -3,100 +3,75 @@ from google import genai
 import os
 import tempfile
 
-app = Flask(_name_)
+app = Flask(__name__)
 
 # ==========================================
-
 # SESSION GİZLİ ANAHTARI
-
 # ==========================================
 
 app.secret_key = os.environ.get(
-"SECRET_KEY",
-"shmart-ai-gizli-anahtar-2026"
+    "SECRET_KEY",
+    "shmart-ai-gizli-anahtar-2026"
 )
 
 # ==========================================
-
 # GEMINI API
-
 # ==========================================
 
 API_KEY = os.environ.get("GEMINI_API_KEY")
 
 if not API_KEY:
-print("UYARI: GEMINI_API_KEY bulunamadı!")
+    print("UYARI: GEMINI_API_KEY bulunamadı!")
 
 client = genai.Client(
-api_key=API_KEY
+    api_key=API_KEY
 )
 
 # ==========================================
-
 # ANA SAYFA
-
 # ==========================================
 
 @app.route("/")
 def index():
-return render_template("index.html")
+    return render_template("index.html")
 
 # ==========================================
-
 # SOHBET GEÇMİŞİNİ AL
-
 # ==========================================
 
 def sohbet_gecmisi_al():
+    if "sohbet_gecmisi" not in session:
+        session["sohbet_gecmisi"] = []
 
-```
-if "sohbet_gecmisi" not in session:
-
-    session["sohbet_gecmisi"] = []
-
-return session["sohbet_gecmisi"]
-```
+    return session["sohbet_gecmisi"]
 
 # ==========================================
-
 # GEÇMİŞE MESAJ EKLE
-
 # ==========================================
 
 def mesaji_kaydet(rol, mesaj):
+    gecmis = sohbet_gecmisi_al()
 
-```
-gecmis = sohbet_gecmisi_al()
+    gecmis.append({
+        "rol": rol,
+        "mesaj": mesaj
+    })
 
-gecmis.append({
-    "rol": rol,
-    "mesaj": mesaj
-})
+    # Son 20 mesajı sakla
+    if len(gecmis) > 20:
+        gecmis = gecmis[-20:]
 
-# Son 20 mesajı sakla
-if len(gecmis) > 20:
-
-    gecmis = gecmis[-20:]
-
-session["sohbet_gecmisi"] = gecmis
-
-session.modified = True
-```
+    session["sohbet_gecmisi"] = gecmis
+    session.modified = True
 
 # ==========================================
-
 # GEMINI İÇİN SOHBET METNİ OLUŞTUR
-
 # ==========================================
 
 def sohbet_metni_olustur():
+    gecmis = sohbet_gecmisi_al()
 
-```
-gecmis = sohbet_gecmisi_al()
-
-metin = """
-```
-
+    metin = """
 Sen Shmart AI adlı yardımcı bir yapay zekasın.
 Kullanıcıyla Türkçe ve anlaşılır şekilde konuş.
 
@@ -108,485 +83,312 @@ SOHBET GEÇMİŞİ:
 
 """
 
-```
-for mesaj in gecmis:
+    for mesaj in gecmis:
+        if mesaj["rol"] == "kullanici":
+            metin += (
+                "Kullanıcı: "
+                + mesaj["mesaj"]
+                + "\n"
+            )
+        elif mesaj["rol"] == "ai":
+            metin += (
+                "Shmart AI: "
+                + mesaj["mesaj"]
+                + "\n"
+            )
 
-    if mesaj["rol"] == "kullanici":
+    metin += "\nŞimdi kullanıcıya cevap ver."
 
-        metin += (
-            "Kullanıcı: "
-            + mesaj["mesaj"]
-            + "\n"
-        )
-
-    elif mesaj["rol"] == "ai":
-
-        metin += (
-            "Shmart AI: "
-            + mesaj["mesaj"]
-            + "\n"
-        )
-
-metin += "\nŞimdi kullanıcıya cevap ver."
-
-return metin
-```
+    return metin
 
 # ==========================================
-
 # GEMINI TEST
-
 # ==========================================
 
 @app.route("/test")
 def test():
+    try:
+        if not API_KEY:
+            return jsonify({
+                "durum": "HATA",
+                "mesaj": "GEMINI_API_KEY Render'da bulunamadı."
+            }), 500
 
-```
-try:
-
-    if not API_KEY:
+        response = client.models.generate_content(
+            model="gemini-3.5-flash",
+            contents="Merhaba! Sadece TEST yaz."
+        )
 
         return jsonify({
+            "durum": "OK",
+            "cevap": response.text
+        })
+
+    except Exception as e:
+        print("TEST HATASI:", repr(e))
+        return jsonify({
             "durum": "HATA",
-            "mesaj": "GEMINI_API_KEY Render'da bulunamadı."
+            "mesaj": str(e)
         }), 500
 
-
-    response = client.models.generate_content(
-
-        model="gemini-3.5-flash",
-
-        contents="Merhaba! Sadece TEST yaz."
-
-    )
-
-
-    return jsonify({
-
-        "durum": "OK",
-
-        "cevap": response.text
-
-    })
-
-
-except Exception as e:
-
-    print("TEST HATASI:", repr(e))
-
-    return jsonify({
-
-        "durum": "HATA",
-
-        "mesaj": str(e)
-
-    }), 500
-```
-
 # ==========================================
-
 # SOR
-
 # ==========================================
 
 @app.route("/sor", methods=["POST"])
 def sor():
+    try:
+        print("================================")
+        print("SOR İSTEĞİ GELDİ")
+        print("================================")
 
-```
-try:
+        # Kullanıcının sorusu
+        soru = request.form.get(
+            "soru",
+            ""
+        ).strip()
 
-    print("================================")
-    print("SOR İSTEĞİ GELDİ")
-    print("================================")
-
-
-    # Kullanıcının sorusu
-    soru = request.form.get(
-        "soru",
-        ""
-    ).strip()
-
-
-    # Dosya
-    dosya = request.files.get(
-        "dosya"
-    )
-
-
-    print("Soru:", soru)
-
-
-    if dosya:
-
-        print(
-            "Dosya:",
-            dosya.filename
+        # Dosya
+        dosya = request.files.get(
+            "dosya"
         )
 
-    else:
+        print("Soru:", soru)
 
-        print("Dosya yok")
-
-
-    # ==================================
-    # API KEY KONTROL
-    # ==================================
-
-    if not API_KEY:
-
-        return jsonify({
-
-            "cevap":
-            "❌ GEMINI_API_KEY Render'da ayarlanmamış."
-
-        }), 500
-
-
-    # ==================================
-    # DOSYA VARSA
-    # ==================================
-
-    if dosya and dosya.filename:
-
-
-        uzanti = os.path.splitext(
-
-            dosya.filename
-
-        )[1]
-
-
-        dosya_yolu = None
-
-
-        try:
-
-
-            # Geçici dosya
-            with tempfile.NamedTemporaryFile(
-
-                delete=False,
-
-                suffix=uzanti
-
-            ) as temp:
-
-
-                dosya.save(
-                    temp.name
-                )
-
-
-                dosya_yolu = temp.name
-
-
+        if dosya:
             print(
-                "Dosya Gemini'ye yükleniyor..."
+                "Dosya:",
+                dosya.filename
             )
+        else:
+            print("Dosya yok")
 
+        # ==================================
+        # API KEY KONTROL
+        # ==================================
 
-            # Gemini Files API
-            gemini_dosyasi = client.files.upload(
+        if not API_KEY:
+            return jsonify({
+                "cevap":
+                "❌ GEMINI_API_KEY Render'da ayarlanmamış."
+            }), 500
 
-                file=dosya_yolu
+        # ==================================
+        # DOSYA VARSA
+        # ==================================
 
-            )
+        if dosya and dosya.filename:
+            uzanti = os.path.splitext(
+                dosya.filename
+            )[1]
 
+            dosya_yolu = None
 
-            print("Dosya yüklendi.")
+            try:
+                # Geçici dosya
+                with tempfile.NamedTemporaryFile(
+                    delete=False,
+                    suffix=uzanti
+                ) as temp:
+                    dosya.save(
+                        temp.name
+                    )
+                    dosya_yolu = temp.name
 
-
-            # Soru yoksa
-            if not soru:
-
-                soru = (
-
-                    "Bu dosyayı incele. "
-
-                    "İçeriğini bana Türkçe olarak açıkla."
-
+                print(
+                    "Dosya Gemini'ye yükleniyor..."
                 )
 
+                # Gemini Files API
+                gemini_dosyasi = client.files.upload(
+                    file=dosya_yolu
+                )
 
-            # Kullanıcı mesajını hafızaya kaydet
+                print("Dosya yüklendi.")
+
+                # Soru yoksa
+                if not soru:
+                    soru = (
+                        "Bu dosyayı incele. "
+                        "İçeriğini bana Türkçe olarak açıkla."
+                    )
+
+                # Kullanıcı mesajını hafızaya kaydet
+                mesaji_kaydet(
+                    "kullanici",
+                    soru
+                )
+
+                # Geçmiş sohbet
+                sohbet_metni = sohbet_metni_olustur()
+
+                print(
+                    "Gemini cevap oluşturuyor..."
+                )
+
+                response = client.models.generate_content(
+                    model="gemini-3.5-flash",
+                    contents=[
+                        sohbet_metni,
+                        gemini_dosyasi
+                    ]
+                )
+
+                print(
+                    "Gemini cevap verdi."
+                )
+
+            finally:
+                # Geçici dosyayı sil
+                if (
+                    dosya_yolu
+                    and
+                    os.path.exists(
+                        dosya_yolu
+                    )
+                ):
+                    os.remove(
+                        dosya_yolu
+                    )
+
+        # ==================================
+        # SADECE YAZI
+        # ==================================
+
+        else:
+            if not soru:
+                return jsonify({
+                    "cevap":
+                    "Lütfen bir mesaj yaz."
+                })
+
+            # ==================================
+            # KULLANICI MESAJINI HAFIZAYA KAYDET
+            # ==================================
+
             mesaji_kaydet(
-
                 "kullanici",
-
                 soru
-
             )
 
+            # ==================================
+            # GEÇMİŞ SOHBETİ OLUŞTUR
+            # ==================================
 
-            # Geçmiş sohbet
             sohbet_metni = sohbet_metni_olustur()
 
-
             print(
-                "Gemini cevap oluşturuyor..."
+                "Sohbet geçmişi ile Gemini'ye gönderiliyor..."
             )
-
 
             response = client.models.generate_content(
-
                 model="gemini-3.5-flash",
-
-                contents=[
-
-                    sohbet_metni,
-
-                    gemini_dosyasi
-
-                ]
-
+                contents=sohbet_metni
             )
-
 
             print(
                 "Gemini cevap verdi."
             )
 
+        # ==================================
+        # CEVAP
+        # ==================================
 
-        finally:
-
-
-            # Geçici dosyayı sil
-            if (
-
-                dosya_yolu
-
-                and
-
-                os.path.exists(
-                    dosya_yolu
-                )
-
-            ):
-
-                os.remove(
-                    dosya_yolu
-                )
-
-
-    # ==================================
-    # SADECE YAZI
-    # ==================================
-
-    else:
-
-
-        if not soru:
-
-            return jsonify({
-
-                "cevap":
-                "Lütfen bir mesaj yaz."
-
-            })
-
+        cevap = response.text
 
         # ==================================
-        # KULLANICI MESAJINI HAFIZAYA KAYDET
+        # AI CEVABINI HAFIZAYA KAYDET
         # ==================================
 
         mesaji_kaydet(
-
-            "kullanici",
-
-            soru
-
+            "ai",
+            cevap
         )
 
+        print("Cevap:", cevap)
 
-        # ==================================
-        # GEÇMİŞ SOHBETİ OLUŞTUR
-        # ==================================
-
-        sohbet_metni = sohbet_metni_olustur()
-
-
-        print(
-            "Sohbet geçmişi ile Gemini'ye gönderiliyor..."
-        )
-
-
-        response = client.models.generate_content(
-
-            model="gemini-3.5-flash",
-
-            contents=sohbet_metni
-
-        )
-
-
-        print(
-            "Gemini cevap verdi."
-        )
-
+        return jsonify({
+            "cevap": cevap
+        })
 
     # ==================================
-    # CEVAP
+    # HATA
     # ==================================
 
-    cevap = response.text
+    except Exception as e:
+        print("================================")
+        print("GEMINI / FLASK HATASI")
+        print("================================")
+        print(repr(e))
+        print("================================")
 
-
-    # ==================================
-    # AI CEVABINI HAFIZAYA KAYDET
-    # ==================================
-
-    mesaji_kaydet(
-
-        "ai",
-
-        cevap
-
-    )
-
-
-    print("Cevap:", cevap)
-
-
-    return jsonify({
-
-        "cevap": cevap
-
-    })
-
-
-# ==================================
-# HATA
-# ==================================
-
-except Exception as e:
-
-
-    print("================================")
-    print("GEMINI / FLASK HATASI")
-    print("================================")
-    print(repr(e))
-    print("================================")
-
-
-    return jsonify({
-
-        "cevap":
-
-        "❌ Gemini hatası:\n"
-
-        + str(e)
-
-    }), 500
-```
+        return jsonify({
+            "cevap":
+            "❌ Gemini hatası:\n"
+            + str(e)
+        }), 500
 
 # ==========================================
-
 # SOHBETİ TEMİZLE
-
 # ==========================================
 
 @app.route("/sohbet_temizle", methods=["POST"])
 def sohbet_temizle():
+    session.pop(
+        "sohbet_gecmisi",
+        None
+    )
 
-```
-session.pop(
-    "sohbet_gecmisi",
-    None
-)
-
-
-return jsonify({
-
-    "mesaj":
-    "Sohbet geçmişi temizlendi."
-
-})
-```
+    return jsonify({
+        "mesaj":
+        "Sohbet geçmişi temizlendi."
+    })
 
 # ==========================================
-
 # SITEMAP
-
 # ==========================================
 
 @app.route("/sitemap.xml")
 def sitemap():
-
-```
-return """<?xml version="1.0" encoding="UTF-8"?>
-```
-
+    return """<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-
 <url>
-
 <loc>https://al-bq0g.onrender.com/</loc>
-
 <priority>1.0</priority>
-
 </url>
-
 </urlset>
 """, 200, {
-
-```
-    "Content-Type":
-    "application/xml"
-
-}
-```
+        "Content-Type":
+        "application/xml"
+    }
 
 # ==========================================
-
 # ROBOTS
-
 # ==========================================
 
 @app.route("/robots.txt")
 def robots():
-
-```
-return """User-agent: *
-```
-
+    return """User-agent: *
 Allow: /
 
 Sitemap: https://al-bq0g.onrender.com/sitemap.xml
 """, 200, {
-
-```
-    "Content-Type":
-    "text/plain"
-
-}
-```
+        "Content-Type":
+        "text/plain"
+    }
 
 # ==========================================
-
 # ÇALIŞTIR
-
 # ==========================================
 
-if **name** == "**main**":
-
-```
-app.run(
-
-    host="0.0.0.0",
-
-    port=int(
-
-        os.environ.get(
-
-            "PORT",
-
-            5000
-
-        )
-
-    ),
-
-    debug=True
-
-)
-```
+if __name__ == "__main__":
+    app.run(
+        host="0.0.0.0",
+        port=int(
+            os.environ.get(
+                "PORT",
+                5000
+            )
+        ),
+        debug=True
+    )
