@@ -1,4 +1,4 @@
-```python
+python
 from flask import Flask, request, jsonify, render_template, session
 from groq import Groq
 import os
