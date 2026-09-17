@@ -1,7 +1,7 @@
+```python
 from flask import Flask, request, jsonify, render_template, session
-from google import genai
+from groq import Groq
 import os
-import tempfile
 
 app = Flask(__name__)
 
@@ -15,17 +15,35 @@ app.secret_key = os.environ.get(
 )
 
 # ==========================================
-# GEMINI API
+# GROQ API
 # ==========================================
 
-API_KEY = os.environ.get("GEMINI_API_KEY")
+API_KEY = os.environ.get("GROQ_API_KEY")
 
 if not API_KEY:
-    print("UYARI: GEMINI_API_KEY bulunamadı!")
+    print("UYARI: GROQ_API_KEY bulunamadı!")
 
-client = genai.Client(
+client = Groq(
     api_key=API_KEY
 )
+
+# Güncel Groq modeli
+MODEL = "openai/gpt-oss-120b"
+
+
+# ==========================================
+# TOKEN TASARRUF AYARLARI
+# ==========================================
+
+# Modele her seferinde gönderilecek son mesaj sayısı
+SON_MESAJ_SAYISI = 8
+
+# Eski konuşmaların özetinde tutulabilecek maksimum karakter
+MAKS_OZET_UZUNLUGU = 4000
+
+# Dosya için maksimum karakter
+MAKS_DOSYA_UZUNLUGU = 40000
+
 
 # ==========================================
 # ANA SAYFA
@@ -35,21 +53,51 @@ client = genai.Client(
 def index():
     return render_template("index.html")
 
+
 # ==========================================
 # SOHBET GEÇMİŞİNİ AL
 # ==========================================
 
 def sohbet_gecmisi_al():
+
     if "sohbet_gecmisi" not in session:
         session["sohbet_gecmisi"] = []
 
     return session["sohbet_gecmisi"]
+
+
+# ==========================================
+# SOHBET ÖZETİNİ AL
+# ==========================================
+
+def sohbet_ozeti_al():
+
+    return session.get(
+        "sohbet_ozeti",
+        ""
+    )
+
+
+# ==========================================
+# SOHBET ÖZETİNİ KAYDET
+# ==========================================
+
+def sohbet_ozeti_kaydet(ozet):
+
+    # Özet aşırı büyümesin
+    if len(ozet) > MAKS_OZET_UZUNLUGU:
+        ozet = ozet[-MAKS_OZET_UZUNLUGU:]
+
+    session["sohbet_ozeti"] = ozet
+    session.modified = True
+
 
 # ==========================================
 # GEÇMİŞE MESAJ EKLE
 # ==========================================
 
 def mesaji_kaydet(rol, mesaj):
+
     gecmis = sohbet_gecmisi_al()
 
     gecmis.append({
@@ -57,338 +105,795 @@ def mesaji_kaydet(rol, mesaj):
         "mesaj": mesaj
     })
 
-    # Son 20 mesajı sakla
-    if len(gecmis) > 20:
-        gecmis = gecmis[-20:]
-
     session["sohbet_gecmisi"] = gecmis
     session.modified = True
 
+
 # ==========================================
-# GEMINI İÇİN SOHBET METNİ OLUŞTUR
+# ESKİ MESAJLARI ÖZETLE
 # ==========================================
 
-def sohbet_metni_olustur():
+def eski_mesajlari_ozetle():
+
     gecmis = sohbet_gecmisi_al()
 
-    metin = """
-Sen Shmart AI adlı yardımcı bir yapay zekasın.
-Kullanıcıyla Türkçe ve anlaşılır şekilde konuş.
+    # Yeterince mesaj yoksa özetleme yapma
+    if len(gecmis) <= SON_MESAJ_SAYISI:
+        return
 
-Aşağıda önceki sohbet bulunmaktadır.
-Önceki konuşmaları hatırla ve kullanıcının
-"az önce ne sordum" gibi sorularına cevap verebil.
+    # Son 8 mesaj dışındaki eski mesajlar
+    eski_mesajlar = gecmis[:-SON_MESAJ_SAYISI]
 
-SOHBET GEÇMİŞİ:
+    # Zaten özetlenmiş eski mesajları tekrar özetlememek için
+    # mevcut özeti alıyoruz.
+    mevcut_ozet = sohbet_ozeti_al()
 
-"""
+    eski_metin = ""
 
-    for mesaj in gecmis:
+    for mesaj in eski_mesajlar:
+
         if mesaj["rol"] == "kullanici":
-            metin += (
+
+            eski_metin += (
                 "Kullanıcı: "
                 + mesaj["mesaj"]
                 + "\n"
             )
+
         elif mesaj["rol"] == "ai":
-            metin += (
+
+            eski_metin += (
                 "Shmart AI: "
                 + mesaj["mesaj"]
                 + "\n"
             )
 
-    metin += "\nŞimdi kullanıcıya cevap ver."
+    # Eski mesajlar çok uzunsa burada da sınırla
+    if len(eski_metin) > 12000:
 
-    return metin
+        eski_metin = eski_metin[-12000:]
+
+    # ==========================================
+    # ÖZETLEME İÇİN AYRI GROQ İSTEĞİ
+    # ==========================================
+
+    try:
+
+        ozet_prompt = f"""
+Sen Shmart AI'ın sohbet hafızasını yöneten yardımcı sistemsin.
+
+Aşağıdaki eski konuşmayı kısa ve faydalı bir hafızaya dönüştür.
+
+Özette özellikle şunları koru:
+
+- Kullanıcının yaptığı proje ve önemli teknik bilgiler
+- Kullanıcının verdiği önemli tercihler
+- Devam eden sorunlar
+- Daha önce konuşulan önemli konular
+- Kodlama konusunda önemli kararlar
+- Kullanıcının sorduğu ve gelecekte tekrar gerekli olabilecek bilgiler
+
+Gereksiz selamlaşmaları ve tekrarları çıkar.
+
+Mevcut eski özet:
+{mevcut_ozet}
+
+Yeni eski konuşmalar:
+{eski_metin}
+
+En fazla yaklaşık 300-500 kelimelik kısa bir hafıza özeti oluştur.
+""".strip()
+
+        response = client.chat.completions.create(
+
+            model=MODEL,
+
+            messages=[
+                {
+                    "role": "system",
+                    "content":
+                    "Kısa ve bilgi yoğun sohbet özeti oluştur."
+                },
+                {
+                    "role": "user",
+                    "content": ozet_prompt
+                }
+            ],
+
+            temperature=0.2,
+
+            max_tokens=800
+        )
+
+        yeni_ozet = response.choices[0].message.content
+
+        if yeni_ozet:
+
+            sohbet_ozeti_kaydet(
+                yeni_ozet
+            )
+
+        # Sadece son mesajları sakla
+        session["sohbet_gecmisi"] = (
+            gecmis[-SON_MESAJ_SAYISI:]
+        )
+
+        session.modified = True
+
+    except Exception as e:
+
+        print(
+            "ÖZETLEME HATASI:",
+            repr(e)
+        )
+
+        # Özetleme başarısız olursa geçmişi silme
+        # sadece son mesajları tut
+        session["sohbet_gecmisi"] = (
+            gecmis[-SON_MESAJ_SAYISI:]
+        )
+
+        session.modified = True
+
 
 # ==========================================
-# GEMINI TEST
+# GROQ İÇİN MESAJLARI OLUŞTUR
+# ==========================================
+
+def mesajlari_olustur():
+
+    gecmis = sohbet_gecmisi_al()
+
+    ozet = sohbet_ozeti_al()
+
+    messages = [
+
+        {
+            "role": "system",
+            "content": """
+Sen Shmart AI adlı yardımcı bir yapay zekasın.
+
+Kullanıcıyla Türkçe ve anlaşılır şekilde konuş.
+
+KODLAMA SORULARINDA:
+
+- Kodu dikkatlice analiz et.
+- Hataları bul.
+- Kullanıcı tam kod isterse eksiksiz kod ver.
+- Kodları Markdown kod blokları içerisinde göster.
+- Gereksiz yere kodu kısaltma.
+- Kullanıcı bir dosya gönderirse dosyanın içeriğini dikkatlice incele.
+
+NORMAL SORULARDA:
+
+- Açık ve anlaşılır cevap ver.
+- Gereksiz yere aşırı uzun cevap verme.
+- Kullanıcının seviyesine uygun anlat.
+
+SOHBET HAFIZASI:
+
+Aşağıdaki özet eski konuşmalardan kalan önemli bilgileri içerir.
+Gerekli olduğunda bu bilgileri kullan.
+
+Sen Shmart AI'sın.
+""".strip()
+        }
+
+    ]
+
+    # ==========================================
+    # ESKİ SOHBET ÖZETİ
+    # ==========================================
+
+    if ozet:
+
+        messages.append({
+
+            "role": "system",
+
+            "content":
+            "Eski sohbetlerden kalan hafıza özeti:\n\n"
+            + ozet
+
+        })
+
+    # ==========================================
+    # SON MESAJLAR
+    # ==========================================
+
+    for mesaj in gecmis:
+
+        if mesaj["rol"] == "kullanici":
+
+            messages.append({
+
+                "role": "user",
+
+                "content":
+                mesaj["mesaj"]
+
+            })
+
+        elif mesaj["rol"] == "ai":
+
+            messages.append({
+
+                "role": "assistant",
+
+                "content":
+                mesaj["mesaj"]
+
+            })
+
+    return messages
+
+
+# ==========================================
+# /TEST
 # ==========================================
 
 @app.route("/test")
 def test():
+
     try:
+
         if not API_KEY:
+
             return jsonify({
+
                 "durum": "HATA",
-                "mesaj": "GEMINI_API_KEY Render'da bulunamadı."
+
+                "mesaj":
+                "GROQ_API_KEY Render'da bulunamadı."
+
             }), 500
 
-        response = client.models.generate_content(
-            model="gemini-3.5-flash",
-            contents="Merhaba! Sadece TEST yaz."
+        response = client.chat.completions.create(
+
+            model=MODEL,
+
+            messages=[
+
+                {
+                    "role": "user",
+                    "content":
+                    "Merhaba! Sadece TEST yaz."
+                }
+
+            ],
+
+            max_tokens=20
+
         )
 
+        cevap = response.choices[0].message.content
+
         return jsonify({
+
             "durum": "OK",
-            "cevap": response.text
+
+            "cevap": cevap
+
         })
 
     except Exception as e:
-        print("TEST HATASI:", repr(e))
+
+        print(
+            "TEST HATASI:",
+            repr(e)
+        )
+
         return jsonify({
+
             "durum": "HATA",
+
             "mesaj": str(e)
+
         }), 500
 
+
 # ==========================================
-# SOR
+# /SOR
 # ==========================================
 
-@app.route("/sor", methods=["POST"])
+@app.route(
+    "/sor",
+    methods=["POST"]
+)
 def sor():
-    try:
-        print("================================")
-        print("SOR İSTEĞİ GELDİ")
-        print("================================")
 
-        # Kullanıcının sorusu
+    try:
+
+        print(
+            "================================"
+        )
+
+        print(
+            "SOR İSTEĞİ GELDİ"
+        )
+
+        print(
+            "================================"
+        )
+
+        # ==================================
+        # KULLANICI SORUSU
+        # ==================================
+
         soru = request.form.get(
             "soru",
             ""
         ).strip()
 
-        # Dosya
+        # ==================================
+        # DOSYA
+        # ==================================
+
         dosya = request.files.get(
             "dosya"
         )
 
-        print("Soru:", soru)
+        print(
+            "Soru:",
+            soru
+        )
 
-        if dosya:
+        if dosya and dosya.filename:
+
             print(
                 "Dosya:",
                 dosya.filename
             )
+
         else:
-            print("Dosya yok")
+
+            print(
+                "Dosya yok"
+            )
 
         # ==================================
-        # API KEY KONTROL
+        # API KEY
         # ==================================
 
         if not API_KEY:
+
             return jsonify({
+
                 "cevap":
-                "❌ GEMINI_API_KEY Render'da ayarlanmamış."
+                "❌ GROQ_API_KEY Render'da ayarlanmamış."
+
             }), 500
+
+        # ==================================
+        # BOŞ İSTEK
+        # ==================================
+
+        if not soru and not dosya:
+
+            return jsonify({
+
+                "cevap":
+                "Lütfen bir mesaj yaz veya dosya gönder."
+
+            })
 
         # ==================================
         # DOSYA VARSA
         # ==================================
 
         if dosya and dosya.filename:
+
+            dosya_adi = dosya.filename
+
+            print(
+                "Dosya okunuyor..."
+            )
+
             uzanti = os.path.splitext(
-                dosya.filename
-            )[1]
-
-            dosya_yolu = None
-
-            try:
-                # Geçici dosya
-                with tempfile.NamedTemporaryFile(
-                    delete=False,
-                    suffix=uzanti
-                ) as temp:
-                    dosya.save(
-                        temp.name
-                    )
-                    dosya_yolu = temp.name
-
-                print(
-                    "Dosya Gemini'ye yükleniyor..."
-                )
-
-                # Gemini Files API
-                gemini_dosyasi = client.files.upload(
-                    file=dosya_yolu
-                )
-
-                print("Dosya yüklendi.")
-
-                # Soru yoksa
-                if not soru:
-                    soru = (
-                        "Bu dosyayı incele. "
-                        "İçeriğini bana Türkçe olarak açıkla."
-                    )
-
-                # Kullanıcı mesajını hafızaya kaydet
-                mesaji_kaydet(
-                    "kullanici",
-                    soru
-                )
-
-                # Geçmiş sohbet
-                sohbet_metni = sohbet_metni_olustur()
-
-                print(
-                    "Gemini cevap oluşturuyor..."
-                )
-
-                response = client.models.generate_content(
-                    model="gemini-3.5-flash",
-                    contents=[
-                        sohbet_metni,
-                        gemini_dosyasi
-                    ]
-                )
-
-                print(
-                    "Gemini cevap verdi."
-                )
-
-            finally:
-                # Geçici dosyayı sil
-                if (
-                    dosya_yolu
-                    and
-                    os.path.exists(
-                        dosya_yolu
-                    )
-                ):
-                    os.remove(
-                        dosya_yolu
-                    )
-
-        # ==================================
-        # SADECE YAZI
-        # ==================================
-
-        else:
-            if not soru:
-                return jsonify({
-                    "cevap":
-                    "Lütfen bir mesaj yaz."
-                })
+                dosya_adi
+            )[1].lower()
 
             # ==================================
-            # KULLANICI MESAJINI HAFIZAYA KAYDET
+            # DESTEKLENEN DOSYALAR
+            # ==================================
+
+            desteklenen = [
+
+                ".txt",
+                ".py",
+                ".html",
+                ".htm",
+                ".css",
+                ".js",
+                ".json",
+                ".csv",
+                ".md",
+                ".xml",
+                ".yml",
+                ".yaml",
+                ".java",
+                ".c",
+                ".cpp",
+                ".cs",
+                ".php",
+                ".sql"
+
+            ]
+
+            if uzanti not in desteklenen:
+
+                return jsonify({
+
+                    "cevap":
+                    f"❌ `{dosya_adi}` dosyasını "
+                    "şu anda doğrudan okuyamıyorum.\n\n"
+                    "Desteklenen dosyalar:\n"
+                    "TXT, PY, HTML, CSS, JS, JSON, "
+                    "CSV, MD, XML, YAML, Java, C, "
+                    "C++, C#, PHP ve SQL."
+
+                }), 400
+
+            # ==================================
+            # DOSYAYI OKU
+            # ==================================
+
+            try:
+
+                dosya_icerigi = dosya.read().decode(
+                    "utf-8",
+                    errors="replace"
+                )
+
+            except Exception as e:
+
+                return jsonify({
+
+                    "cevap":
+                    f"❌ Dosya okunamadı: {str(e)}"
+
+                }), 400
+
+            # ==================================
+            # DOSYA SINIRI
+            # ==================================
+
+            if len(dosya_icerigi) > MAKS_DOSYA_UZUNLUGU:
+
+                dosya_icerigi = (
+                    dosya_icerigi[
+                        :MAKS_DOSYA_UZUNLUGU
+                    ]
+                    +
+                    "\n\n[Dosyanın devamı "
+                    "çok uzun olduğu için kesildi.]"
+                )
+
+            # ==================================
+            # SORU YOKSA
+            # ==================================
+
+            if not soru:
+
+                soru = (
+                    "Bu dosyayı incele. "
+                    "İçeriğini Türkçe olarak açıkla. "
+                    "Kod varsa ne yaptığını ve "
+                    "varsa hatalarını belirt."
+                )
+
+            # ==================================
+            # KULLANICI MESAJINI KAYDET
             # ==================================
 
             mesaji_kaydet(
+
                 "kullanici",
+
+                f"{soru}\n\n"
+                f"[Dosya: {dosya_adi}]"
+
+            )
+
+            # ==================================
+            # ESKİ MESAJLARI ÖZETLE
+            # ==================================
+
+            eski_mesajlari_ozetle()
+
+            # ==================================
+            # NORMAL MESAJLARI AL
+            # ==================================
+
+            messages = mesajlari_olustur()
+
+            # ==================================
+            # DOSYAYI SON MESAJ OLARAK EKLE
+            # ==================================
+
+            dosya_mesaji = f"""
+Kullanıcı bir dosya gönderdi.
+
+Dosya adı:
+{dosya_adi}
+
+Dosya içeriği:
+--------------------
+{dosya_icerigi}
+--------------------
+
+Kullanıcının sorusu:
+{soru}
+
+Dosyanın içeriğini dikkate alarak cevap ver.
+""".strip()
+
+            messages.append({
+
+                "role": "user",
+
+                "content":
+                dosya_mesaji
+
+            })
+
+            print(
+                "Groq dosya içeriği ile cevap oluşturuyor..."
+            )
+
+            response = client.chat.completions.create(
+
+                model=MODEL,
+
+                messages=messages,
+
+                temperature=0.7,
+
+                max_tokens=4096
+
+            )
+
+            print(
+                "Groq cevap verdi."
+            )
+
+        # ==========================================
+        # SADECE YAZI
+        # ==========================================
+
+        else:
+
+            if not soru:
+
+                return jsonify({
+
+                    "cevap":
+                    "Lütfen bir mesaj yaz."
+
+                })
+
+            # ==================================
+            # MESAJI KAYDET
+            # ==================================
+
+            mesaji_kaydet(
+
+                "kullanici",
+
                 soru
+
             )
 
             # ==================================
-            # GEÇMİŞ SOHBETİ OLUŞTUR
+            # ESKİ MESAJLARI ÖZETLE
             # ==================================
 
-            sohbet_metni = sohbet_metni_olustur()
+            eski_mesajlari_ozetle()
+
+            # ==================================
+            # MESAJLARI OLUŞTUR
+            # ==================================
+
+            messages = mesajlari_olustur()
 
             print(
-                "Sohbet geçmişi ile Gemini'ye gönderiliyor..."
+                "Token tasarruflu sohbet ile "
+                "Groq'a gönderiliyor..."
             )
 
-            response = client.models.generate_content(
-                model="gemini-3.5-flash",
-                contents=sohbet_metni
+            # ==================================
+            # GROQ
+            # ==================================
+
+            response = client.chat.completions.create(
+
+                model=MODEL,
+
+                messages=messages,
+
+                temperature=0.7,
+
+                max_tokens=4096
+
             )
 
             print(
-                "Gemini cevap verdi."
+                "Groq cevap verdi."
             )
 
-        # ==================================
+        # ==========================================
         # CEVAP
-        # ==================================
+        # ==========================================
 
-        cevap = response.text
+        cevap = response.choices[0].message.content
 
-        # ==================================
-        # AI CEVABINI HAFIZAYA KAYDET
-        # ==================================
+        if not cevap:
+
+            cevap = (
+                "❌ AI boş bir cevap döndürdü."
+            )
+
+        # ==========================================
+        # AI CEVABINI KAYDET
+        # ==========================================
 
         mesaji_kaydet(
+
             "ai",
+
+            cevap
+
+        )
+
+        print(
+            "Cevap:",
             cevap
         )
 
-        print("Cevap:", cevap)
-
         return jsonify({
-            "cevap": cevap
+
+            "cevap":
+            cevap
+
         })
 
-    # ==================================
+    # ==========================================
     # HATA
-    # ==================================
+    # ==========================================
 
     except Exception as e:
-        print("================================")
-        print("GEMINI / FLASK HATASI")
-        print("================================")
-        print(repr(e))
-        print("================================")
+
+        print(
+            "================================"
+        )
+
+        print(
+            "GROQ / FLASK HATASI"
+        )
+
+        print(
+            "================================"
+        )
+
+        print(
+            repr(e)
+        )
+
+        print(
+            "================================"
+        )
 
         return jsonify({
+
             "cevap":
-            "❌ Gemini hatası:\n"
+            "❌ Groq hatası:\n"
             + str(e)
+
         }), 500
+
 
 # ==========================================
 # SOHBETİ TEMİZLE
 # ==========================================
 
-@app.route("/sohbet_temizle", methods=["POST"])
+@app.route(
+    "/sohbet_temizle",
+    methods=["POST"]
+)
 def sohbet_temizle():
+
     session.pop(
         "sohbet_gecmisi",
         None
     )
 
+    session.pop(
+        "sohbet_ozeti",
+        None
+    )
+
     return jsonify({
+
         "mesaj":
         "Sohbet geçmişi temizlendi."
+
     })
+
 
 # ==========================================
 # SITEMAP
 # ==========================================
 
-@app.route("/sitemap.xml")
+@app.route(
+    "/sitemap.xml"
+)
 def sitemap():
+
     return """<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+
+<urlset
+xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+
 <url>
-<loc>https://al-bq0g.onrender.com/</loc>
-<priority>1.0</priority>
+
+<loc>
+https://al-bq0g.onrender.com/
+</loc>
+
+<priority>
+1.0
+</priority>
+
 </url>
+
 </urlset>
 """, 200, {
+
         "Content-Type":
         "application/xml"
+
     }
+
 
 # ==========================================
 # ROBOTS
 # ==========================================
 
-@app.route("/robots.txt")
+@app.route(
+    "/robots.txt"
+)
 def robots():
+
     return """User-agent: *
 Allow: /
 
 Sitemap: https://al-bq0g.onrender.com/sitemap.xml
 """, 200, {
+
         "Content-Type":
         "text/plain"
+
     }
+
 
 # ==========================================
 # ÇALIŞTIR
 # ==========================================
 
 if __name__ == "__main__":
+
     app.run(
+
         host="0.0.0.0",
+
         port=int(
             os.environ.get(
                 "PORT",
                 5000
             )
         ),
+
         debug=True
+
     )
+```
